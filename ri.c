@@ -303,11 +303,10 @@ int tucw_get_or_determine(Tucw *tucw, So so, So_Uc_Point *ucp) {
 
 void ri_fmt_text_line(So *out, Point dimension, Tucw *tucw, So line, ssize_t offset) {
     ssize_t bytes = line.len;
-    size_t line_len = 0;
+    ssize_t line_len = 0;
     size_t n_ch = 0;
     So_Uc_Point ucp;
     if(offset < 0) {
-        ucp.bytes = -offset;
         line_len += -offset;
         so_fmt(out, "%*s", -offset, "");
     } 
