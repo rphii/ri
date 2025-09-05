@@ -304,20 +304,28 @@ int tucw_get_or_determine(Tucw *tucw, So so, So_Uc_Point *ucp) {
 void ri_fmt_text_line(So *out, Point dimension, Tucw *tucw, So line, ssize_t offset) {
     ssize_t bytes = line.len;
     ssize_t line_len = 0;
-    size_t n_ch = 0;
+    size_t x = 0;
     So_Uc_Point ucp;
     if(offset < 0) {
         line_len += -offset;
+        x += -offset;
         so_fmt(out, "%*s", -offset, "");
     } 
-    for(ssize_t i = 0; i < bytes; i += ucp.bytes, ++n_ch) {
+    for(ssize_t i = 0; i < bytes; i += ucp.bytes) {
         So so0 = so_i0(line, i);
-        int cw = tucw_get_or_determine(tucw, so0, &ucp);
+        ssize_t cw = tucw_get_or_determine(tucw, so0, &ucp);
         if(cw < 0) break;
         if(line_len + cw > dimension.x) break;
-        line_len += cw;
-        if(line_len < offset) continue;
-        so_extend(out, so_iE(so0, ucp.bytes));
+        ssize_t line_len_new = line_len + cw;
+        if(line_len_new >= offset) {
+            if(cw > 1 && line_len < offset && line_len_new > offset) {
+                ssize_t line_len_delta = line_len_new - offset;
+                so_fmt(out, "%*s", line_len_delta, "");
+            } else {
+                so_extend(out, so_iE(so0, ucp.bytes));
+            }
+        }
+        line_len = line_len_new;
     }
 }
 
