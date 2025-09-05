@@ -95,6 +95,7 @@ int input_get(Input *input) {
             while(bytes + 1 < INPUT_MAX && input_get_byte(&input->c[++bytes])) {
                 if(input->c[bytes] == 0x1b) {
                     input->carry_esc = true;
+                    //--bytes;
                     break;
                 }
             }
@@ -254,8 +255,10 @@ bool input_decode(Input *input, InputDecode *decode) {
     *decode = (InputDecode){0};
     if(input->bytes == 0) return false;
     if(!iscntrl(input->c[0])) return false;
-    if(!strcmp((char *)input->c, "\x1b[C")) decode->id = KEY_RIGHT;
-    if(!strcmp((char *)input->c, "\x1b[D")) decode->id = KEY_LEFT;
+    if(input->bytes == 3) {
+        if(!strncmp((char *)input->c, "\x1b[C", input->bytes)) decode->id = KEY_RIGHT;
+        if(!strncmp((char *)input->c, "\x1b[D", input->bytes)) decode->id = KEY_LEFT;
+    }
     return true;
 }
 
@@ -289,16 +292,22 @@ int tucw_get_or_determine(Tucw *tucw, So so, So_Uc_Point *ucp) {
     return result;
 }
 
-void ri_fmt_text_line(So *out, Point dimension, Tucw *tucw, So line) {
-    size_t bytes = line.len;
+void ri_fmt_text_line(So *out, Point dimension, Tucw *tucw, So line, ssize_t offset) {
+    ssize_t bytes = line.len;
     size_t line_len = 0;
     So_Uc_Point ucp;
-    for(size_t i = 0; i < bytes; i += ucp.bytes) {
-        So so0 = so_i0(line, i);
-        int cw = tucw_get_or_determine(tucw, so0, &ucp);
-        if(line_len + cw > dimension.x) break;
-        line_len += cw;
-        so_extend(out, so_iE(so0, ucp.bytes));
+    for(ssize_t i = offset; i < bytes; i += ucp.bytes) {
+        if(i < 0) {
+            ucp.bytes = 1;
+            line_len += 1;
+            so_push(out, ' ');
+        } else {
+            So so0 = so_i0(line, i);
+            int cw = tucw_get_or_determine(tucw, so0, &ucp);
+            if(line_len + cw > dimension.x) break;
+            line_len += cw;
+            so_extend(out, so_iE(so0, ucp.bytes));
+        }
     }
 }
 
@@ -306,6 +315,7 @@ int main(void) {
     struct winsize w;
     ioctl(0, TIOCGWINSZ, &w);
     Point dimension = { .x = w.ws_col, .y = w.ws_row };
+    Point offset = {0};
     Tucw tucw = {0};
     enable_raw_mode();
     Input input = {0};
@@ -318,17 +328,22 @@ int main(void) {
     while(1) {
         if(!input_get(&input)) continue;
         if(input_decode(&input, &input_dc)) {
+            if(input_dc.id == KEY_LEFT) ++offset.x;
+            if(input_dc.id == KEY_RIGHT) --offset.x;
         } else {
             so_extend(&line, so_ll(input.c, input.bytes));
             so_clear(&out);
-            so_extend(&out, so(ESC_CODE_CLEAR));
-            so_extend(&out, so(ESC_CODE_CURSOR_HIDE));
-            so_extend(&out, so(ESC_CODE_HOME));
-            ri_fmt_text_line(&out, dimension, &tucw, line);
-            so_extend(&out, so(ESC_CODE_CURSOR_SHOW));
-            write(STDOUT_FILENO, so_it0(out), out.len);
         }
+        /* quit cond */
         if(input.bytes == 1 && input.c[0] == 'q') break;
+        /* render */
+        so_clear(&out);
+        so_extend(&out, so(ESC_CODE_CLEAR));
+        so_extend(&out, so(ESC_CODE_CURSOR_HIDE));
+        so_extend(&out, so(ESC_CODE_HOME));
+        ri_fmt_text_line(&out, dimension, &tucw, line, offset.x);
+        so_extend(&out, so(ESC_CODE_CURSOR_SHOW));
+        write(STDOUT_FILENO, so_it0(out), out.len);
     }
     so_free(&out);
     return 0;
