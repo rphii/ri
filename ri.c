@@ -239,6 +239,10 @@ void input_fmt_ctrl(So *out, Input input) {
 
 typedef enum {
     KEY_NONE,
+    KEY_ESC,
+    KEY_ENTER,
+    KEY_UP,
+    KEY_DOWN,
     KEY_LEFT,
     KEY_RIGHT,
 } Key_List;
@@ -255,7 +259,12 @@ bool input_decode(Input *input, InputDecode *decode) {
     *decode = (InputDecode){0};
     if(input->bytes == 0) return false;
     if(!iscntrl(input->c[0])) return false;
-    if(input->bytes == 3) {
+    if(input->bytes == 1) {
+        if(*input->c == 0x1b) decode->id = KEY_ESC;
+        if(*input->c == 0x0d) decode->id = KEY_ENTER;
+    } else if(input->bytes == 3) {
+        if(!strncmp((char *)input->c, "\x1b[A", input->bytes)) decode->id = KEY_UP;
+        if(!strncmp((char *)input->c, "\x1b[B", input->bytes)) decode->id = KEY_DOWN;
         if(!strncmp((char *)input->c, "\x1b[C", input->bytes)) decode->id = KEY_RIGHT;
         if(!strncmp((char *)input->c, "\x1b[D", input->bytes)) decode->id = KEY_LEFT;
     }
@@ -295,20 +304,34 @@ int tucw_get_or_determine(Tucw *tucw, So so, So_Uc_Point *ucp) {
 void ri_fmt_text_line(So *out, Point dimension, Tucw *tucw, So line, ssize_t offset) {
     ssize_t bytes = line.len;
     size_t line_len = 0;
+    size_t n_ch = 0;
     So_Uc_Point ucp;
-    for(ssize_t i = offset; i < bytes; i += ucp.bytes) {
-        if(i < 0) {
-            ucp.bytes = 1;
-            line_len += 1;
-            so_push(out, ' ');
-        } else {
-            So so0 = so_i0(line, i);
-            int cw = tucw_get_or_determine(tucw, so0, &ucp);
-            if(cw < 0) break;
-            if(line_len + cw > dimension.x) break;
-            line_len += cw;
-            so_extend(out, so_iE(so0, ucp.bytes));
+    if(offset < 0) {
+        ucp.bytes = -offset;
+        line_len += -offset;
+        so_fmt(out, "%*s", -offset, "");
+    } 
+    for(ssize_t i = 0; i < bytes; i += ucp.bytes, ++n_ch) {
+        So so0 = so_i0(line, i);
+        int cw = tucw_get_or_determine(tucw, so0, &ucp);
+        if(cw < 0) break;
+        if(line_len + cw > dimension.x) break;
+        line_len += cw;
+        if(line_len < offset) continue;
+        so_extend(out, so_iE(so0, ucp.bytes));
+    }
+}
+
+void ri_fmt_text_lines(So *out, Point dimension, Tucw *tucw, VSo lines, Point offset) {
+    ssize_t n_lines = array_len(lines);
+    size_t n_line = 0;
+    for(ssize_t i = offset.y; i < n_lines; ++i, ++n_line) {
+        if(i > offset.y) so_extend(out, so("\r\n"));
+        if(i >= 0) {
+            So line = array_at(lines, i);
+            ri_fmt_text_line(out, dimension, tucw, line, offset.x);
         }
+        if(n_line >= dimension.y) break;
     }
 }
 
@@ -324,27 +347,40 @@ int main(void) {
     byte exit_cmp[4] = { 0x1b, 0x3a, 0x71, 0x0d };
     byte exit_count = 0;
     So out = {0};
-    So line = {0};
+    VSo lines = 0;
+    vso_push(&lines, SO);
+    So *line = &lines[0];
     write(STDOUT_FILENO, so_it0(out), out.len);
-    while(1) {
+    bool quit = false;
+    while(!quit) {
         if(!input_get(&input)) continue;
         if(input_decode(&input, &input_dc)) {
-            if(input_dc.id == KEY_LEFT) ++offset.x;
-            if(input_dc.id == KEY_RIGHT) --offset.x;
+            switch(input_dc.id) {
+                case KEY_ESC: quit = true; break;
+                case KEY_UP: --offset.y; break;
+                case KEY_DOWN: ++offset.y; break;
+                case KEY_LEFT: --offset.x; break;
+                case KEY_RIGHT: ++offset.x; break;
+                case KEY_ENTER: {
+                    size_t len = array_len(lines);
+                    vso_push(&lines, SO);
+                    line = &lines[len];
+                } break;
+                default: break;
+            }
         } else {
-            so_extend(&line, so_ll(input.c, input.bytes));
+            so_extend(line, so_ll(input.c, input.bytes));
             so_clear(&out);
         }
-        /* quit cond */
-        if(input.bytes == 1 && input.c[0] == 'q') break;
         /* render */
         so_clear(&out);
+        //so_extend(&out, so(ESC_CODE_CURSOR_HIDE));
         so_extend(&out, so(ESC_CODE_CLEAR));
-        so_extend(&out, so(ESC_CODE_CURSOR_HIDE));
         so_extend(&out, so(ESC_CODE_HOME));
-        ri_fmt_text_line(&out, dimension, &tucw, line, offset.x);
-        so_extend(&out, so(ESC_CODE_CURSOR_SHOW));
+        ri_fmt_text_lines(&out, dimension, &tucw, lines, offset);
+        ri_write_cstr(ESC_CODE_CURSOR_HIDE);
         write(STDOUT_FILENO, so_it0(out), out.len);
+        ri_write_cstr(ESC_CODE_CURSOR_SHOW);
     }
     so_free(&out);
     return 0;
