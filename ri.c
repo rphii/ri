@@ -274,7 +274,7 @@ typedef struct Point {
 } Point;
 
 int tucw_get_or_determine(Tucw *tucw, So so, So_Uc_Point *ucp) {
-    if(so_uc_point(so, ucp)) die("invalid uc point");
+    if(so_uc_point(so, ucp)) return -1;
     if(ucp->val < 0x80) {
         if(!iscntrl((int)ucp->val)) return 1;
         else return 0; /* TODO control characters.. might want to display as ^A for ctrl+A */
@@ -304,6 +304,7 @@ void ri_fmt_text_line(So *out, Point dimension, Tucw *tucw, So line, ssize_t off
         } else {
             So so0 = so_i0(line, i);
             int cw = tucw_get_or_determine(tucw, so0, &ucp);
+            if(cw < 0) break;
             if(line_len + cw > dimension.x) break;
             line_len += cw;
             so_extend(out, so_iE(so0, ucp.bytes));
